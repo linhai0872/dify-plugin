@@ -20,6 +20,7 @@ help:
 supported_model_types:
   - llm
   - text-embedding
+  - rerank
 configurate_methods:
   - predefined-model
   - customizable-model
@@ -153,9 +154,14 @@ models:
     position: models/text_embedding/_position.yaml
     predefined:
       - "models/text_embedding/*.yaml"
+  rerank:
+    position: models/rerank/_position.yaml
+    predefined:
+      - "models/rerank/*.yaml"
 extra:
   python:
     provider_source: provider/zenmux.py
     model_sources:
       - "models/llm/llm.py"
       - "models/text_embedding/text_embedding.py"
+      - "models/rerank/rerank.py"
