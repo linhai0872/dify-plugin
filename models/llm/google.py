@@ -37,6 +37,8 @@ from dify_plugin.interfaces.model.large_language_model import LargeLanguageModel
 from google import genai
 from google.genai import errors, types
 
+from models._common import vertex_base_url
+
 from .utils import FileCache, UNSUPPORTED_DOCUMENT_TYPES, UNSUPPORTED_EXTENSIONS
 
 _MMC = TypeVar("_MMC", bound=MultiModalPromptMessageContent)
@@ -138,7 +140,7 @@ class ZenMuxGoogleLargeLanguageModel(LargeLanguageModel):
                         file_url = f"{file_server_url_prefix.rstrip('/')}/files{message_content.url.split('/files')[-1]}"
                     if not file_url.startswith("https://") and not file_url.startswith("http://"):
                         raise ValueError("Set FILES_URL env first!")
-                    response: requests.Response = requests.get(file_url)
+                    response: requests.Response = requests.get(file_url, timeout=(10, 120))
                     response.raise_for_status()
                     temp_file.write(response.content)
                 except Exception as ex:
@@ -890,11 +892,7 @@ class ZenMuxGoogleLargeLanguageModel(LargeLanguageModel):
         # == InitConfig == #
 
         config = types.GenerateContentConfig()
-        genai_client = genai.Client(
-            api_key=credentials["api_key"],
-            http_options=types.HttpOptions(api_version="v1", base_url="https://zenmux.ai/api/vertex-ai"),
-            vertexai=True
-        )
+        genai_client = self._client(credentials)
 
         # == ChatConfig == #
 
@@ -987,10 +985,16 @@ class ZenMuxGoogleLargeLanguageModel(LargeLanguageModel):
         :return:
         """
         try:
-            genai_client = genai.Client(
-                api_key=credentials["google_api_key"],
-                http_options=types.HttpOptions(base_url=credentials.get("google_base_url", None)),
+            self._client(credentials).models.generate_content(
+                model=model, contents="ping", config=types.GenerateContentConfig(max_output_tokens=16)
             )
-            genai_client.models.count_tokens(model=model, contents="ping")
         except Exception as ex:
             raise CredentialsValidateFailedError(str(ex))
+
+    @staticmethod
+    def _client(credentials: dict) -> genai.Client:
+        return genai.Client(
+            api_key=credentials["api_key"],
+            http_options=types.HttpOptions(api_version="v1", base_url=vertex_base_url(credentials)),
+            vertexai=True,
+        )

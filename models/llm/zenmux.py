@@ -1,9 +1,29 @@
 
 from dify_plugin import LargeLanguageModel
-from dify_plugin.entities.model import AIModelEntity
+from dify_plugin.entities.model import AIModelEntity, ModelType
+
+from .anthropic_llm import ZenMuxAnthropicLargeLanguageModel
+from .google import ZenMuxGoogleLargeLanguageModel
+from .openai import ZenMuxOpenAICCLargeLanguageModel
+
+PROTOCOL_CLASSES = {
+    "anthropic": ZenMuxAnthropicLargeLanguageModel,
+    "google": ZenMuxGoogleLargeLanguageModel,
+    "openai": ZenMuxOpenAICCLargeLanguageModel,
+}
 
 
-MODEL_CLASS_MAP = {}
+def protocol_of(model: str) -> str:
+    """Which ZenMux endpoint serves a predefined model.
+
+    Must stay in sync with scripts/zenmux_models.py::protocol_of, which decides
+    the parameter template generated for each model.
+    """
+    if model.startswith("anthropic/"):
+        return "anthropic"
+    if model.startswith("google/gemini-"):
+        return "google"
+    return "openai"
 
 
 class ZenMuxLargeLanguageModel(LargeLanguageModel):
@@ -14,46 +34,29 @@ class ZenMuxLargeLanguageModel(LargeLanguageModel):
     def __init__(self, model_schemas: list[AIModelEntity]) -> None:
         super().__init__(model_schemas)
 
-        model_class_map = {}
+        grouped: dict[str, list[AIModelEntity]] = {name: [] for name in PROTOCOL_CLASSES}
         for model_schema in model_schemas:
-            model_class = MODEL_CLASS_MAP.get(model_schema.model)
-            if model_class is None:
-                continue
-            if model_class not in model_class_map:
-                model_schema_list = model_class_map.setdefault(model_class, [])
-            else:
-                model_schema_list = model_class_map[model_class]
-            model_schema_list.append(model_schema)
+            if model_schema.model_type == ModelType.LLM:
+                grouped[protocol_of(model_schema.model)].append(model_schema)
 
-        default_model_class = MODEL_CLASS_MAP.get("*")
-
-        model_map = {}
-        for model_class in model_class_map:
-            model_schema_list = model_class_map[model_class]
-            model = model_class(model_schema_list)
-            if model_class == default_model_class:
-                self.default_model = model
-
-            for model_schema in model_schema_list:
-                model_map[model_schema.model] = model
-
-        self.model_map = model_map
+        instances = {name: PROTOCOL_CLASSES[name](schemas) for name, schemas in grouped.items()}
+        self.protocol_models = list(instances.values())
+        self.default_model = instances["openai"]
+        self.model_map = {
+            model_schema.model: instances[name]
+            for name, schemas in grouped.items()
+            for model_schema in schemas
+        }
 
     def _get_model_class_for_model(self, model: str):
         """
-        Get the appropriate model implementation class for a given model name.
-        Supports custom models by checking model name prefixes.
+        Predefined models are routed by their provider prefix; customizable models
+        (anything not in the predefined list) use the OpenAI-compatible endpoint.
 
         :param model: Model name (e.g., 'deepseek/deepseek-chat:deepseek')
         :return: Model implementation instance
         """
-        # First, try exact match
-        if model in self.model_map:
-            return self.model_map[model]
-
-        # For DeepSeek and other custom models, use OpenAI CC as default
-        # User example: deepseek/deepseek-chat:deepseek
-        return self.default_model
+        return self.model_map.get(model, self.default_model)
 
     def validate_credentials(self, model: str, *args, **kwargs):
         model_obj = self._get_model_class_for_model(model)
@@ -61,7 +64,12 @@ class ZenMuxLargeLanguageModel(LargeLanguageModel):
 
     @property
     def _invoke_error_mapping(self):
-        return self.default_model._invoke_error_mapping
+        merged: dict = {}
+        for model_obj in self.protocol_models:
+            for invoke_error, sources in model_obj._invoke_error_mapping.items():
+                bucket = merged.setdefault(invoke_error, [])
+                bucket.extend(s for s in sources if s not in bucket)
+        return merged
 
     def _invoke(self, model: str, *args, **kwargs):
         model_obj = self._get_model_class_for_model(model)

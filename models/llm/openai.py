@@ -15,13 +15,17 @@ from dify_plugin.entities.model.message import (
     UserPromptMessage,
 )
 
+from models._common import apply_reported_cost, openai_base_url, strip_reasoning
+
 logger = logging.getLogger(__name__)
+
+REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 class ZenMuxOpenAICCLargeLanguageModel(OAICompatLargeLanguageModel):
 
     def _update_credential(self, model: str, credentials: dict):
-        credentials["endpoint_url"] = "https://zenmux.ai/api/v1"
+        credentials["endpoint_url"] = openai_base_url(credentials)
         credentials["mode"] = self.get_model_mode(model).value
         schema = self.get_model_schema(model, credentials)
         if schema and {ModelFeature.TOOL_CALL, ModelFeature.MULTI_TOOL_CALL}.intersection(
@@ -62,12 +66,8 @@ class ZenMuxOpenAICCLargeLanguageModel(OAICompatLargeLanguageModel):
             reasoning["max_tokens"] = budget
 
         effort = model_parameters.pop("reasoning_effort", None)
-        if effort in ("high", "medium", "low", "minimal", "none"):
+        if effort in REASONING_EFFORTS:
             reasoning["effort"] = effort
-
-        exclude = model_parameters.pop("exclude_reasoning_tokens", None)
-        if isinstance(exclude, bool):
-            reasoning["exclude"] = exclude
 
         if reasoning:
             model_parameters["reasoning"] = reasoning
@@ -94,13 +94,27 @@ class ZenMuxOpenAICCLargeLanguageModel(OAICompatLargeLanguageModel):
         if not (schema and ModelFeature.VISION in (schema.features or [])):
             prompt_messages = self._convert_files_to_text(prompt_messages)
 
+        # ZenMux ignores `reasoning.exclude`, so hiding is done on our side.
+        hide_reasoning = bool(model_parameters.pop("exclude_reasoning_tokens", False))
         self._set_reasoning_params(model_parameters)
         self._set_json_schema_params(model_parameters)
 
         if stream:
             model_parameters.setdefault("stream_options", {})["include_usage"] = True
 
-        return self._generate(model, credentials, prompt_messages, model_parameters, tools, stop, stream, user)
+        result = self._generate(model, credentials, prompt_messages, model_parameters, tools, stop, stream, user)
+        return strip_reasoning(result) if stream and hide_reasoning else result
+
+    def _create_final_llm_result_chunk(self, *args, **kwargs):
+        chunk = super()._create_final_llm_result_chunk(*args, **kwargs)
+        raw_usage = kwargs["usage"] if "usage" in kwargs else (args[3] if len(args) > 3 else None)
+        chunk.delta.usage = apply_reported_cost(chunk.delta.usage, raw_usage)
+        return chunk
+
+    def _handle_generate_response(self, model, credentials, response, prompt_messages) -> LLMResult:
+        result = super()._handle_generate_response(model, credentials, response, prompt_messages)
+        result.usage = apply_reported_cost(result.usage, response.json().get("usage"))
+        return result
 
     def get_num_tokens(
         self,
@@ -115,8 +129,3 @@ class ZenMuxOpenAICCLargeLanguageModel(OAICompatLargeLanguageModel):
     def validate_credentials(self, model: str, credentials: dict) -> None:
         self._update_credential(model, credentials)
         return super().validate_credentials(model, credentials)
-
-    def _wrap_thinking_by_reasoning_content(self, delta: dict, is_reasoning: bool) -> tuple[str, bool]:
-        if "reasoning" in delta and "reasoning_content" not in delta:
-            delta["reasoning_content"] = delta.pop("reasoning")
-        return super()._wrap_thinking_by_reasoning_content(delta, is_reasoning)
