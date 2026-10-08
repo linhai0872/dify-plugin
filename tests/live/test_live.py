@@ -6,8 +6,10 @@ Optional: ZENMUX_LIVE_REGION=cn to run everything against zenmux.dev.
 
 import json
 import os
+from pathlib import Path
 
 import pytest
+import yaml
 from dify_plugin.entities.model import ModelType
 from dify_plugin.entities.model.message import (
     PromptMessageTool,
@@ -188,20 +190,47 @@ def test_qwen_vl_embedding_batches_over_the_20_input_limit(factory):
     assert len(result.embeddings) == 45
 
 
-def test_multimodal_embedding_and_rerank_use_the_image(factory):
+COLORS = {"red": b"\xe6\x1e\x1e", "green": b"\x1e\xaa\x3c", "blue": b"\x1e\x3c\xdc"}
+
+
+def _vision_models(folder):
+    root = Path(__file__).resolve().parents[2] / "models" / folder
+    return sorted(d["model"] for p in root.glob("[!_]*.yaml")
+                  if "vision" in ((d := yaml.safe_load(p.read_text())).get("features") or []))
+
+
+def _mm(content, image=False):
     from dify_plugin.entities.model.text_embedding import MultiModalContent, MultiModalContentType
 
-    image = lambda rgb: MultiModalContent(content=_square_png(rgb), content_type=MultiModalContentType.IMAGE)
-    text = lambda s: MultiModalContent(content=s, content_type=MultiModalContentType.TEXT)
-    red, blue = image(b"\xff\x00\x00"), image(b"\x00\x00\xff")
+    return MultiModalContent(content=content, content_type=MultiModalContentType.IMAGE if image else MultiModalContentType.TEXT)
 
+
+@pytest.mark.parametrize("model", _vision_models("text_embedding"))
+def test_multimodal_embedding_matches_image_to_caption(factory, model):
+    # Every embedding model shipped with `vision` must actually encode the image content.
     embedder = factory.get_instance(ModelType.TEXT_EMBEDDING)
-    result = embedder.invoke_multimodal("qwen/qwen3-vl-embedding", creds(), [red, text("a red square")])
-    assert len(result.embeddings) == 2 and result.usage.total_price > 0
+    docs = [_mm(_square_png(rgb), image=True) for rgb in COLORS.values()] + [_mm(f"a solid {c} square") for c in COLORS]
+    vecs = embedder.invoke_multimodal(model, creds(), docs).embeddings
+    cos = lambda a, b: sum(x * y for x, y in zip(a, b)) / (sum(x * x for x in a) * sum(y * y for y in b)) ** 0.5
+    for i in range(len(COLORS)):
+        sims = [cos(vecs[i], vecs[len(COLORS) + j]) for j in range(len(COLORS))]
+        assert sims.index(max(sims)) == i, (model, list(COLORS)[i], sims)
 
+
+@pytest.mark.parametrize("model", _vision_models("rerank"))
+def test_multimodal_rerank_matches_image_to_caption(factory, model):
     reranker = factory.get_instance(ModelType.RERANK)
-    ranked = reranker.invoke_multimodal("qwen/qwen3-vl-rerank", creds(), text("a solid blue square"), [red, blue])
-    assert ranked.docs[0].index == 1
-    ranked = reranker.invoke_multimodal("qwen/qwen3-vl-rerank", creds(), red,
-                                        [text("a blue square"), text("a red square")])
-    assert ranked.docs[0].index == 1
+    captions = [_mm(f"a solid {c} square") for c in COLORS]
+    for i, rgb in enumerate(COLORS.values()):
+        ranked = reranker.invoke_multimodal(model, creds(), _mm(_square_png(rgb), image=True), captions)
+        assert ranked.docs[0].index == i, (model, list(COLORS)[i], ranked.docs)
+    ranked = reranker.invoke_multimodal(model, creds(), _mm("a solid blue square"),
+                                        [_mm(_square_png(rgb), image=True) for rgb in COLORS.values()])
+    assert ranked.docs[0].index == 2
+
+
+def test_multimodal_embedding_request_path(factory):
+    # The image request path works mechanically even where image semantics are not verified yet.
+    embedder = factory.get_instance(ModelType.TEXT_EMBEDDING)
+    result = embedder.invoke_multimodal("qwen/qwen3-vl-embedding", creds(), [_mm(_square_png(), image=True), _mm("red")])
+    assert len(result.embeddings) == 2 and result.usage.total_price > 0

@@ -37,11 +37,15 @@ sha256 digest shown on the release page; point `DIFY_PLUGIN_CLI` at it. Unsigned
 3. **Probe** new/changed models (PAYG key recommended; < $1):
    `ZENMUX_PROBE_API_KEY=... .venv/bin/python scripts/zenmux_models.py probe` (`--all` to refresh everything,
    `--only <regex>` for a subset). Probes detect retired models, tool calling, `reasoning_effort` values,
-   Claude temperature/adaptive thinking and embedding batching.
+   Claude temperature/adaptive thinking, embedding batching, and whether embedding/rerank models that the
+   catalog lists with image input really use the image (coloured squares must match their captions).
+   Re-probe `--only 'embedding|rerank'` on every release: ZenMux fixes or breaks image support without notice.
 4. **Sync**: `.venv/bin/python scripts/zenmux_models.py sync > /tmp/sync_report.md`. Read the report:
    - *Excluded → no pricing*: verify the real rate via `GET /api/v1/management/generation?id=<id>`
      (`ratingDetails[].rate` is USD per 1M tokens) and add it under `manual` with a `verified` date — or leave it out.
    - Suspicious capability/param changes → fix via `overrides.yaml` `models:` entries, with a reason.
+   - *Image input listed but not verified*: these ship text-only (no `vision`, so Dify won't send them images).
+     Only force it with `features_add: [vision]` after checking real retrieval quality yourself.
 5. **Code changes** (if any), then `.venv/bin/python -m pytest tests/unit -q` — must be green
    (includes `sync --check`, so YAMLs cannot drift from `catalog/`).
 6. **Live**: `ZENMUX_LIVE_API_KEY=... .venv/bin/python -m pytest tests/live -q` (add `ZENMUX_LIVE_REGION=cn`

@@ -12,6 +12,7 @@
 - anthropic/claude-fable-5.1
 - anthropic/claude-opus-5.5
 - anthropic/claude-sonnet-5.5
+- anthropic/claude-haiku-5.5
 - google/gemini-2.5-flash
 - google/gemini-2.5-pro
 - google/gemini-2.5-flash-lite

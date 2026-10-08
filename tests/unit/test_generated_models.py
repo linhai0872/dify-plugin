@@ -1,5 +1,7 @@
 """Regression guards for model metadata that once broke real requests."""
 
+import json
+
 import yaml
 
 from conftest import ROOT
@@ -31,13 +33,18 @@ def _model(folder, stem):
     return yaml.safe_load((ROOT / "models" / folder / f"{stem}.yaml").read_text())
 
 
-def test_multimodal_retrieval_models_are_flagged_for_dify():
-    # Dify's knowledge base only sends images to embedding/rerank models that list `vision`.
-    assert "vision" in _model("text_embedding", "qwen3-vl-embedding")["features"]
+def test_vision_on_retrieval_models_requires_a_passing_image_probe():
+    # Dify's knowledge base sends images to embedding/rerank models that list `vision`; the catalog's
+    # input modalities alone are not trusted (some models accept images but ignore their content).
+    probes = json.loads((ROOT / "catalog" / "probes.json").read_text())["models"]
+    forced = {mid for mid, o in ((yaml.safe_load((ROOT / "catalog" / "overrides.yaml").read_text()) or {})
+                                 .get("models") or {}).items() if "vision" in (o.get("features_add") or [])}
+    for folder in ("text_embedding", "rerank"):
+        for path in (ROOT / "models" / folder).glob("[!_]*.yaml"):
+            data = yaml.safe_load(path.read_text())
+            expected = (probes.get(data["model"]) or {}).get("image") == "ok" or data["model"] in forced
+            assert ("vision" in (data.get("features") or [])) == expected, data["model"]
     assert "vision" in _model("rerank", "qwen3-vl-rerank")["features"]
-    # ZenMux embeds gemini-embedding-2 data URIs as text, so it must stay text-only.
-    assert "features" not in _model("text_embedding", "gemini-embedding-2")
-    assert "features" not in _model("rerank", "qwen3-rerank")
 
 
 def test_qwen_vl_embedding_batch_limit():

@@ -18,6 +18,12 @@
    "temperature": true,
    "adaptive": false
   },
+  "anthropic/claude-haiku-5.5": {
+   "checked_at": "2026-10-08",
+   "alive": true,
+   "temperature": false,
+   "adaptive": true
+  },
   "anthropic/claude-opus-4.5": {
    "checked_at": "2026-10-07",
    "alive": true,
@@ -218,8 +224,9 @@
    "alive": true
   },
   "google/gemini-embedding-2": {
-   "checked_at": "2026-10-07",
-   "batch_ok": false
+   "checked_at": "2026-10-08",
+   "batch_ok": false,
+   "image": "mismatch 1/3"
   },
   "google/gemma-4-26b-a4b-it": {
    "checked_at": "2026-10-07",
@@ -729,11 +736,11 @@
    ]
   },
   "openai/text-embedding-3-large": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "batch_ok": true
   },
   "openai/text-embedding-3-small": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "batch_ok": true
   },
   "qwen/qwen3-coder-plus": {
@@ -747,11 +754,12 @@
    "tools": "called"
   },
   "qwen/qwen3-rerank": {
-   "checked_at": "2026-10-07"
+   "checked_at": "2026-10-08"
   },
   "qwen/qwen3-vl-embedding": {
-   "checked_at": "2026-10-07",
-   "batch_ok": true
+   "checked_at": "2026-10-08",
+   "batch_ok": true,
+   "image": "mismatch 1/3"
   },
   "qwen/qwen3-vl-plus": {
    "checked_at": "2026-10-07",
@@ -759,7 +767,8 @@
    "tools": "called"
   },
   "qwen/qwen3-vl-rerank": {
-   "checked_at": "2026-10-07"
+   "checked_at": "2026-10-08",
+   "image": "ok"
   },
   "qwen/qwen3.5-flash": {
    "checked_at": "2026-10-07",

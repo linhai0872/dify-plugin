@@ -57,10 +57,6 @@ models:
   google/gemini-2.5-pro:
     # Thinking cannot be turned off: "does not support setting thinking_budget to 0" (400), verified 2026-10-07.
     params_remove: [thinking_mode]
-  google/gemini-embedding-2:
-    # Catalog lists image input, but ZenMux embeds data-URI strings as text (token count grows with the
-    # base64 length) and returns 500 for object inputs, verified 2026-10-07. Keep it text-only.
-    features_remove: [vision]
   qwen/qwen3-vl-embedding:
     # Batches over 20 inputs fail: "batch size ... should not be larger than 20" (400), verified 2026-10-07.
     max_chunks: 20

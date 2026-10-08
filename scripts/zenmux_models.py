@@ -6,7 +6,8 @@ Subcommands:
           and write a normalized snapshot to catalog/snapshot.json.
   probe   Run cheap live requests that the catalog cannot answer (tool calling,
           reasoning_effort values, Claude temperature/adaptive thinking, embedding
-          batching) and record results in catalog/probes.json. Needs ZENMUX_PROBE_API_KEY.
+          batching, whether embedding/rerank models really use images) and record
+          results in catalog/probes.json. Needs ZENMUX_PROBE_API_KEY.
   sync    Generate models/**/*.yaml and _position.yaml from snapshot + probes +
           catalog/overrides.yaml, and print a change report (usable as PR body).
   check   Exit non-zero if the committed YAMLs differ from what `sync` would generate.
@@ -16,14 +17,18 @@ Sources of truth, in priority order: overrides.yaml > probes.json > official cat
 """
 
 import argparse
+import base64
 import concurrent.futures
 import datetime
 import json
+import math
 import os
 import re
+import struct
 import sys
 import urllib.error
 import urllib.request
+import zlib
 from pathlib import Path
 
 import yaml
@@ -193,11 +198,61 @@ def _post(path, body, key, anthropic=False):
         return 0, str(exc)[:300]
 
 
+COLORS = {"red": (230, 30, 30), "green": (30, 170, 60), "blue": (30, 60, 220)}
+
+
+def _color_png_uri(rgb, size=64):
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    raw = b"".join(b"\x00" + bytes(rgb) * size for _ in range(size))
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+    return "data:image/png;base64," + base64.b64encode(png).decode()
+
+
+def _cos(a, b):
+    return sum(x * y for x, y in zip(a, b)) / math.sqrt(sum(x * x for x in a) * sum(y * y for y in b))
+
+
+def probe_image(m, key):
+    """Does the model use image content, sent the way the plugin sends it at runtime?
+
+    Accepting an image is not enough (some models silently embed the data URI as text, or
+    return near-identical vectors for every image), so each solid-colour square must match
+    its own caption: by cosine similarity for embeddings, as the top hit for rerank.
+    """
+    images = {c: _color_png_uri(rgb) for c, rgb in COLORS.items()}
+    captions = [f"a solid {c} square" for c in COLORS]
+    hits = 0
+    if m["type"] == "text-embedding":
+        vectors = []
+        for item in [*images.values(), *captions]:
+            status, body = _post("/api/v1/embeddings", {"model": m["id"], "input": [item]}, key)
+            if status != 200:
+                return f"error:{status}"
+            vectors.append(body["data"][0]["embedding"])
+        for i in range(len(COLORS)):
+            sims = [_cos(vectors[i], vectors[len(COLORS) + j]) for j in range(len(COLORS))]
+            hits += sims.index(max(sims)) == i
+    else:
+        for i, uri in enumerate(images.values()):
+            status, body = _post("/api/v1/rerank", {"model": m["id"], "parameters": {"top_n": len(COLORS)},
+                                                    "input": {"query": {"image": uri}, "documents": [{"text": c} for c in captions]}}, key)
+            if status != 200:
+                return f"error:{status}"
+            results = body.get("results") or []
+            hits += bool(results) and max(results, key=lambda r: r["relevance_score"])["index"] == i
+    return "ok" if hits == len(COLORS) else f"mismatch {hits}/{len(COLORS)}"
+
+
 def probe_model(m, key):
     mid, proto, result = m["id"], protocol_of(m["id"]), {"checked_at": today()}
-    if m["type"] == "text-embedding":
-        status, body = _post("/api/v1/embeddings", {"model": mid, "input": ["alpha", "beta", "gamma"]}, key)
-        result["batch_ok"] = status == 200 and len(body.get("data", [])) == 3
+    if m["type"] in ("text-embedding", "rerank"):
+        if m["type"] == "text-embedding":
+            status, body = _post("/api/v1/embeddings", {"model": mid, "input": ["alpha", "beta", "gamma"]}, key)
+            result["batch_ok"] = status == 200 and len(body.get("data", [])) == 3
+        if "image" in m["input"]:
+            result["image"] = probe_image(m, key)
         return result
     if m["type"] != "llm":
         return result
@@ -462,26 +517,30 @@ def build_llm(m, probe):
     }
 
 
-def retrieval_features(m):
-    """Dify (>= 1.11) treats embedding/rerank models listing `vision` as multimodal and sends images."""
-    feats = ["vision"] if "image" in m["input"] else []
+def retrieval_features(m, probe):
+    """Dify (>= 1.11) treats embedding/rerank models listing `vision` as multimodal and sends images.
+
+    The catalog's input modalities are not trusted on their own: `vision` needs a passing image probe.
+    """
+    feats = ["vision"] if "image" in m["input"] and probe.get("image") == "ok" else []
     removed = set(m.get("features_remove") or [])
-    return {"features": kept} if (kept := [f for f in feats if f not in removed]) else {}
+    kept = [f for f in feats + list(m.get("features_add") or []) if f not in removed]
+    return {"features": kept} if kept else {}
 
 
 def build_embedding(m, probe):
     max_chunks = m.get("max_chunks") or (2048 if probe.get("batch_ok", True) else 1)
     return {
         "model": m["id"], "label": i18n(m["name"], m["name"]), "model_type": "text-embedding",
-        **retrieval_features(m),
+        **retrieval_features(m, probe),
         "model_properties": {"context_size": m.get("context") or 8192, "max_chunks": max_chunks},
         "pricing": price_block(m["price"], with_output=False),
     }
 
 
-def build_rerank(m, _probe):
+def build_rerank(m, probe):
     return {"model": m["id"], "label": i18n(m["name"], m["name"]), "model_type": "rerank",
-            **retrieval_features(m),
+            **retrieval_features(m, probe),
             "model_properties": {"context_size": m.get("context") or 8192}}
 
 
@@ -542,6 +601,7 @@ def model_id_of(text):
 
 def cmd_sync(args):
     files, models, dropped, snapshot = build_all()
+    probes = load_json(PROBES, {}).get("models", {})
     old = existing_files()
     added, removed, changed = [], [], []
     for path, text in files.items():
@@ -572,6 +632,11 @@ def cmd_sync(args):
     if tiered:
         lines += [f"### Tiered pricing ({len(tiered)}) - YAML holds the base tier; Dify records the per-request `usage.cost` where ZenMux returns it",
                   ", ".join(f"`{i}`" for i in tiered), ""]
+    unverified = [(m["id"], (probes.get(m["id"]) or {}).get("image", "not probed")) for m in models
+                  if m["type"] != "llm" and "image" in m["input"] and (probes.get(m["id"]) or {}).get("image") != "ok"]
+    if unverified:
+        lines += ["### Image input listed in the catalog but not verified - shipped text-only (re-probe to re-check)"]
+        lines += [f"- `{mid}`: {res}" for mid, res in unverified] + [""]
     lines += ["### Excluded"] + [f"- `{m['id']}`: {r}" for m, r in sorted(dropped, key=lambda x: x[0]["id"])]
     print("\n".join(lines))
 

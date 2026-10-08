@@ -1,5 +1,5 @@
 {
- "fetched_at": "2026-10-07",
+ "fetched_at": "2026-10-08",
  "source": "https://zenmux.ai/api/v1/models",
  "models": [
   {
@@ -76,6 +76,28 @@
     "top_p",
     "web_search_options"
    ],
+   "website_reasoning": 3
+  },
+  {
+   "id": "anthropic/claude-haiku-5.5",
+   "name": "Anthropic: Claude Haiku 5.5",
+   "type": "llm",
+   "publish_time": "2026-10-07",
+   "input": [
+    "text",
+    "image",
+    "file"
+   ],
+   "context": 1000000,
+   "reasoning": true,
+   "price": {
+    "input": 0.1,
+    "output": 0.5,
+    "cache_read": 0.01
+   },
+   "tiered": true,
+   "max_output": 128000,
+   "params": [],
    "website_reasoning": 3
   },
   {
