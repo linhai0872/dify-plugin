@@ -46,7 +46,28 @@ def test_anthropic_thinking_style_follows_schema(llm):
     on = {"enable_thinking": True}
     assert budget_model._thinking_config("anthropic/claude-haiku-4.5", {}, on)["type"] == "enabled"
     assert adaptive_model._thinking_config("anthropic/claude-opus-4.8", {}, on) == {"type": "adaptive"}
-    assert adaptive_model._thinking_config("anthropic/claude-opus-4.8", {}, {}) is None
+
+
+def test_anthropic_thinking_off_follows_the_per_model_table(llm):
+    # Anthropic: newer models think by default, so "off" must be explicit and differs per model;
+    # always-on models cannot turn it off and get no switch.
+    model = llm._get_model_class_for_model("anthropic/claude-haiku-5.5")
+    assert model._thinking_config("anthropic/claude-haiku-5.5", {}, {}) == {"type": "disabled"}
+    assert model._thinking_config("anthropic/claude-sonnet-5.5", {}, {}) == {"type": "between_tools"}
+    assert model._thinking_config("anthropic/claude-opus-5.5", {}, {}) is None
+    params, _ = model._build_request_params("anthropic/claude-haiku-4.5", {"max_tokens": 10, "temperature": 0.3},
+                                            None, [], None, None, thinking={"type": "disabled"})
+    assert params["thinking"] == {"type": "disabled"} and params["temperature"] == 0.3
+
+
+def test_always_on_claude_models_have_no_thinking_switch():
+    from conftest import ROOT
+    import yaml
+
+    rules = lambda stem: {r["name"] for r in yaml.safe_load((ROOT / "models" / "llm" / f"{stem}.yaml").read_text())["parameter_rules"]}
+    assert "enable_thinking" not in rules("claude-opus-5.5")
+    assert {"enable_thinking", "exclude_reasoning_tokens"} <= rules("claude-sonnet-5.5")
+    assert "exclude_reasoning_tokens" in rules("claude-opus-5.5")
 
 
 def test_anthropic_json_schema_objects_are_closed(llm):

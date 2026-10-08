@@ -12,7 +12,7 @@ tag the release and open the Marketplace PR in `langgenius/dify-plugins`). Day-t
 | `models/llm/zenmux.py` | Routes predefined models by id prefix: `anthropic/*` → Anthropic native, `google/gemini-*` → Vertex, rest → OpenAI-compatible. Custom (non-predefined) models always use OpenAI-compatible |
 | `models/llm/{openai,anthropic_llm,google}.py` | One class per ZenMux protocol |
 | `models/text_embedding/`, `models/rerank/` | Embeddings (OpenAI-compatible), rerank (ZenMux `input`/`parameters` body, raw scores) |
-| `models/**/*.yaml` | **Generated** — never hand-edit; change `catalog/overrides.yaml` and re-run sync |
+| `models/**/*.yaml`, `models/llm/_anthropic_thinking.json` | **Generated** — never hand-edit; change `catalog/overrides.yaml` and re-run sync |
 | `catalog/` | `snapshot.json` (normalized live catalog), `probes.json` (live probe results), `overrides.yaml` (manual knowledge with reasons + dates) |
 | `scripts/zenmux_models.py` | `fetch` / `probe` / `sync` / `check` |
 | `scripts/package.sh` | Builds the `.difypkg` from a clean `git ls-files` copy |
@@ -37,13 +37,15 @@ sha256 digest shown on the release page; point `DIFY_PLUGIN_CLI` at it. Unsigned
 3. **Probe** new/changed models (PAYG key recommended; < $1):
    `ZENMUX_PROBE_API_KEY=... .venv/bin/python scripts/zenmux_models.py probe` (`--all` to refresh everything,
    `--only <regex>` for a subset). Probes detect retired models, tool calling, `reasoning_effort` values,
-   Claude temperature/adaptive thinking, embedding batching, and whether embedding/rerank models that the
+   Claude temperature/adaptive thinking and how thinking is turned off, embedding batching, and whether embedding/rerank models that the
    catalog lists with image input really use the image (coloured squares must match their captions).
    Re-probe `--only 'embedding|rerank'` on every release: ZenMux fixes or breaks image support without notice.
 4. **Sync**: `.venv/bin/python scripts/zenmux_models.py sync > /tmp/sync_report.md`. Read the report:
    - *Excluded → no pricing*: verify the real rate via `GET /api/v1/management/generation?id=<id>`
      (`ratingDetails[].rate` is USD per 1M tokens) and add it under `manual` with a `verified` date — or leave it out.
    - Suspicious capability/param changes → fix via `overrides.yaml` `models:` entries, with a reason.
+   - *Claude thinking off-switch*: compare with Anthropic's per-model table
+     (platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting). `always_on` models get no switch.
    - *Image input listed but not verified*: these ship text-only (no `vision`, so Dify won't send them images).
      Only force it with `features_add: [vision]` after checking real retrieval quality yourself.
 5. **Code changes** (if any), then `.venv/bin/python -m pytest tests/unit -q` — must be green
@@ -69,6 +71,9 @@ sha256 digest shown on the release page; point `DIFY_PLUGIN_CLI` at it. Unsigned
   which equals the bill's `originAmount` (tiers and cache applied, promotional discounts NOT applied; for
   discounted models `billAmount` is lower). Vertex (Gemini) and embeddings fall back to YAML base-tier prices.
 - ZenMux ignores `reasoning.exclude`; "hide thought process" is enforced in `strip_reasoning`.
+- Claude thinking follows Anthropic's per-model table: newer models think by default, so "off" is sent explicitly
+  (`disabled`, or `between_tools` on Sonnet 5.5); always-on models (Opus 5.5, Fable) cannot turn it off.
+  Check provider docs before calling something a ZenMux bug; ZenMux's own docs lag behind new models.
 - Free (`-free`) and zero-priced models are excluded on purpose.
 - Keep `requirements.txt` pinned to exact versions that passed the Dify matrix; prefer releases older than 7 days.
 - Secrets: keys only via environment variables; `.env` is ignored by git and by packaging.

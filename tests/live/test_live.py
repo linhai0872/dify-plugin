@@ -104,6 +104,25 @@ def test_claude_thinking_styles(llm, model, expect):
     assert_billed(usage)
 
 
+THINKING_OFF = json.loads((Path(__file__).resolve().parents[2] / "models" / "llm" / "_anthropic_thinking.json").read_text())
+TRICKY = "A bat and a ball cost 1.10 in total. The bat costs 1.00 more than the ball. How much is the ball? Answer with just the number."
+
+
+@pytest.mark.parametrize("model", sorted(m for m, off in THINKING_OFF.items() if off != "always_on"))
+def test_claude_thinking_switch_off_really_stops_thinking(llm, model):
+    # Newer Claude models think by default; with the switch off the plugin must send the model's off value.
+    text, _, usage = run(llm, model, ask(TRICKY), {"max_tokens": 1024, "enable_thinking": False})
+    assert "<think>" not in text and "0.05" in text, (model, text[:200])
+    assert_billed(usage)
+
+
+@pytest.mark.parametrize("model", sorted(m for m, off in THINKING_OFF.items() if off == "always_on"))
+def test_always_on_claude_can_hide_the_thought_process(llm, model):
+    text, _, usage = run(llm, model, ask(TRICKY), {"max_tokens": 4096, "exclude_reasoning_tokens": True})
+    assert "<think>" not in text and "0.05" in text, (model, text[:200])
+    assert_billed(usage)
+
+
 @pytest.mark.parametrize("model,params", [
     ("google/gemini-2.5-flash-lite", {"thinking_mode": False}),
     ("google/gemini-2.5-flash-lite", {"thinking_mode": True, "thinking_budget": 1024}),

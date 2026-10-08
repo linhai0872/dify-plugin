@@ -1,88 +1,102 @@
 {
  "models": {
   "anthropic/claude-fable-5": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": false,
-   "adaptive": true
+   "adaptive": true,
+   "thinking_off": "always_on"
   },
   "anthropic/claude-fable-5.1": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": false,
-   "adaptive": true
+   "adaptive": true,
+   "thinking_off": "always_on"
   },
   "anthropic/claude-haiku-4.5": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": true,
-   "adaptive": false
+   "adaptive": false,
+   "thinking_off": "disabled"
   },
   "anthropic/claude-haiku-5.5": {
    "checked_at": "2026-10-08",
    "alive": true,
    "temperature": false,
-   "adaptive": true
+   "adaptive": true,
+   "thinking_off": "disabled"
   },
   "anthropic/claude-opus-4.5": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": true,
-   "adaptive": false
+   "adaptive": false,
+   "thinking_off": "disabled"
   },
   "anthropic/claude-opus-4.6": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": true,
-   "adaptive": true
+   "adaptive": true,
+   "thinking_off": "disabled"
   },
   "anthropic/claude-opus-4.7": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": false,
-   "adaptive": true
+   "adaptive": true,
+   "thinking_off": "disabled"
   },
   "anthropic/claude-opus-4.8": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": false,
-   "adaptive": true
+   "adaptive": true,
+   "thinking_off": "disabled"
   },
   "anthropic/claude-opus-5": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": false,
-   "adaptive": true
+   "adaptive": true,
+   "thinking_off": "disabled"
   },
   "anthropic/claude-opus-5.5": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": false,
-   "adaptive": true
+   "adaptive": true,
+   "thinking_off": "always_on"
   },
   "anthropic/claude-sonnet-4.5": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": true,
-   "adaptive": false
+   "adaptive": false,
+   "thinking_off": "disabled"
   },
   "anthropic/claude-sonnet-4.6": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": true,
-   "adaptive": true
+   "adaptive": true,
+   "thinking_off": "disabled"
   },
   "anthropic/claude-sonnet-5": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": false,
-   "adaptive": true
+   "adaptive": true,
+   "thinking_off": "disabled"
   },
   "anthropic/claude-sonnet-5.5": {
-   "checked_at": "2026-10-07",
+   "checked_at": "2026-10-08",
    "alive": true,
    "temperature": false,
-   "adaptive": true
+   "adaptive": true,
+   "thinking_off": "between_tools"
   },
   "baidu/ernie-5.0-thinking-preview": {
    "checked_at": "2026-10-07",
