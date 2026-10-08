@@ -73,6 +73,16 @@ parameter_rules:
   - low
   - medium
   - high
+- name: exclude_reasoning_tokens
+  type: boolean
+  required: false
+  default: false
+  label:
+    en_US: Hide the thought process
+    zh_Hans: 隐藏思考过程
+  help:
+    en_US: Drop the streamed thought process from the output.
+    zh_Hans: 不在输出中展示思考过程。
 pricing:
   input: '0.1'
   output: '0.5'

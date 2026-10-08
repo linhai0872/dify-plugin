@@ -1,25 +1,47 @@
+import base64
 import json
 import logging
 from collections.abc import Generator
+from pathlib import Path
 from typing import Optional, Union
 
+import requests
 from dify_plugin import OAICompatLargeLanguageModel
 from dify_plugin.entities.model import ModelFeature
 from dify_plugin.entities.model.llm import LLMResult
 from dify_plugin.entities.model.message import (
-    ImagePromptMessageContent,
     PromptMessage,
     PromptMessageContentType,
     PromptMessageTool,
-    TextPromptMessageContent,
     UserPromptMessage,
 )
 
-from models._common import apply_reported_cost, openai_base_url, strip_reasoning
+from models._common import apply_reported_cost, keep_supported_files, openai_base_url, strip_reasoning
 
 logger = logging.getLogger(__name__)
 
 REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+
+def _base64(c) -> str:
+    return c.base64_data or base64.b64encode(requests.get(c.url, timeout=(10, 120)).content).decode()
+
+
+# ZenMux passes files through to each upstream, and upstreams disagree on the part format: the
+# documented `file` works for PDFs, while videos need `video_url` on most providers and audio is raw
+# or data-URI base64 depending on the provider. The probe tries the candidates in order per model
+# and scripts/zenmux_models.py writes the winner to _openai_inputs.json; the first is the default.
+PART_FORMATS = {
+    "file": lambda c: {"type": "file", "file": {"filename": c.filename or f"{c.type.value}.{c.format}", "file_data": c.data}},
+    "video_url": lambda c: {"type": "video_url", "video_url": {"url": c.data}},
+    "input_audio": lambda c: {"type": "input_audio", "input_audio": {"data": _base64(c), "format": c.format}},
+    "input_audio_uri": lambda c: {"type": "input_audio", "input_audio": {
+        "data": f"data:{c.mime_type};base64,{_base64(c)}", "format": c.format}},
+}
+INPUT_FORMAT_CANDIDATES = {"file": ["file"], "video": ["video_url", "file"], "audio": ["input_audio", "input_audio_uri"]}
+INPUT_KIND = {PromptMessageContentType.DOCUMENT: "file", PromptMessageContentType.VIDEO: "video",
+              PromptMessageContentType.AUDIO: "audio"}
+INPUT_FORMATS = json.loads((Path(__file__).parent / "_openai_inputs.json").read_text())
 
 
 class ZenMuxOpenAICCLargeLanguageModel(OAICompatLargeLanguageModel):
@@ -33,24 +55,26 @@ class ZenMuxOpenAICCLargeLanguageModel(OAICompatLargeLanguageModel):
         ):
             credentials["function_calling_type"] = "tool_call"
         credentials["extra_headers"] = {"HTTP-Referer": "https://dify.ai/", "X-Title": "Dify"}
+        credentials["input_formats"] = INPUT_FORMATS.get(model, {})
 
     @staticmethod
-    def _convert_files_to_text(messages: list[PromptMessage]) -> list[PromptMessage]:
-        result = []
-        for msg in messages:
-            if not (isinstance(msg, UserPromptMessage) and isinstance(msg.content, list)):
-                result.append(msg)
-                continue
-            parts = []
-            for c in msg.content:
-                if isinstance(c, TextPromptMessageContent):
-                    parts.append(c.data)
-                elif isinstance(c, ImagePromptMessageContent):
-                    parts.append(f"[Image: {c.url}]" if c.url else "[Image]")
-                elif c.type == PromptMessageContentType.DOCUMENT:
-                    parts.append(f"[File: {getattr(c, 'url', '')}]")
-            result.append(UserPromptMessage(content=" ".join(parts)))
-        return result
+    def _content_part(c, formats: dict | None = None) -> dict:
+        """One Dify content item as a ZenMux Chat Completions part, in the format this model accepts."""
+        if c.type == PromptMessageContentType.TEXT:
+            return {"type": "text", "text": c.data}
+        if c.type == PromptMessageContentType.IMAGE:
+            return {"type": "image_url", "image_url": {"url": c.data, "detail": c.detail.value}}
+        kind = INPUT_KIND[c.type]
+        return PART_FORMATS[(formats or {}).get(kind) or INPUT_FORMAT_CANDIDATES[kind][0]](c)
+
+    def _convert_prompt_message_to_dict(self, message: PromptMessage, credentials: dict | None = None) -> dict:
+        if isinstance(message, UserPromptMessage) and isinstance(message.content, list):
+            formats = (credentials or {}).get("input_formats")
+            message_dict = {"role": "user", "content": [self._content_part(c, formats) for c in message.content]}
+            if message.name:
+                message_dict["name"] = message.name
+            return message_dict
+        return super()._convert_prompt_message_to_dict(message, credentials)
 
     @staticmethod
     def _set_reasoning_params(model_parameters: dict):
@@ -91,8 +115,7 @@ class ZenMuxOpenAICCLargeLanguageModel(OAICompatLargeLanguageModel):
         self._update_credential(model, credentials)
 
         schema = self.get_model_schema(model, credentials)
-        if not (schema and ModelFeature.VISION in (schema.features or [])):
-            prompt_messages = self._convert_files_to_text(prompt_messages)
+        prompt_messages = keep_supported_files(prompt_messages, schema.features if schema else None)
 
         # ZenMux ignores `reasoning.exclude`, so hiding is done on our side.
         hide_reasoning = bool(model_parameters.pop("exclude_reasoning_tokens", False))

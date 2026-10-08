@@ -151,22 +151,50 @@ def _square_png(rgb: bytes = b"\xff\x00\x00") -> str:
     return base64.b64encode(png).decode()
 
 
-# openai/gpt-4.1* is left out on purpose: it misreads images even via the raw ZenMux API (upstream issue).
-@pytest.mark.parametrize("model,params", [
-    ("openai/gpt-4o-mini", {"max_tokens": 32}),
-    ("anthropic/claude-haiku-4.5", {"max_tokens": 32}),
-    ("google/gemini-2.5-flash-lite", {"max_output_tokens": 32}),
-    ("moonshotai/kimi-k2.6", {"max_tokens": 512}),
-])
-def test_vision_input(llm, model, params):
-    from dify_plugin.entities.model.message import ImagePromptMessageContent, TextPromptMessageContent
+def _cheapest_per_route_and_input():
+    """For every (route, file input) some shipped model declares, the cheapest such model."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import zenmux_models as gen
 
-    prompt = [UserPromptMessage(content=[
-        TextPromptMessageContent(data="What single color fills this image? Answer with one word."),
-        ImagePromptMessageContent(format="png", base64_data=_square_png(), mime_type="image/png"),
-    ])]
-    text, _, _ = run(llm, model, prompt, params)
-    assert "red" in text.lower().split("</think>")[-1]
+    best = {}
+    for path in sorted((Path(__file__).resolve().parents[2] / "models" / "llm").glob("[!_]*.yaml")):
+        data = yaml.safe_load(path.read_text())
+        for modality, feature in gen.MODAL_FEATURES.items():
+            if feature in (data.get("features") or []):
+                key = (gen.protocol_of(data["model"]), modality)
+                price = float(data["pricing"]["input"])
+                if key not in best or price < best[key][1]:
+                    best[key] = (data["model"], price)
+    return sorted((route, modality, model) for (route, modality), (model, _) in best.items())
+
+
+@pytest.fixture(scope="module")
+def samples():
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import zenmux_models as gen
+
+    return gen.input_samples()
+
+
+@pytest.mark.parametrize("route,modality,model", _cheapest_per_route_and_input())
+def test_file_input_reaches_the_model(llm, samples, route, modality, model):
+    # Every route x input the YAMLs advertise, end to end through the plugin: the answer is a random code.
+    from dify_plugin.entities.model.message import TextPromptMessageContent
+
+    if modality not in samples:
+        pytest.skip(f"no local tool to make a {modality} sample")
+    content, question, check = samples[modality]
+    params = {"max_output_tokens": 2048} if route == "google" else {"max_tokens": 2048}
+    prompt = [UserPromptMessage(content=[TextPromptMessageContent(data=question), content])]
+    answers = []
+    for _ in range(2):  # same policy as the probe: one retry, since small models sometimes mishear audio
+        text, _, _ = run(llm, model, prompt, params)
+        answers.append(text.split("</think>")[-1])
+        if check(answers[-1]):
+            break
+    assert check(answers[-1]), (model, answers)
 
 
 def test_openai_reasoning_effort(llm):

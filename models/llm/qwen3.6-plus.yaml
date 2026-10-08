@@ -11,7 +11,6 @@ features:
 - agent-thought
 - vision
 - video
-- document
 model_properties:
   mode: chat
   context_size: 1000000

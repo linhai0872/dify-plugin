@@ -60,3 +60,24 @@ models:
   qwen/qwen3-vl-embedding:
     # Batches over 20 inputs fail: "batch size ... should not be larger than 20" (400), verified 2026-10-07.
     max_chunks: 20
+
+# Parameters/features a model shipped in the last release and no longer gets, reviewed by hand because no
+# catalog/probe evidence explains them (see scripts/zenmux_models.py::release_removals). Verified 2026-10-08.
+accepted_removals:
+  anthropic/claude-haiku-4.5:
+    # "`temperature` and `top_p` cannot both be specified for this model" (400); temperature is kept.
+    params: [top_p]
+  openai/gpt-4.1: {params: [top_k]}  # OpenAI has no top_k; ZenMux accepted it with no effect.
+  openai/gpt-4.1-mini: {params: [top_k]}
+  openai/gpt-4.1-nano: {params: [top_k]}
+  openai/gpt-4o: {params: [top_k]}
+  openai/gpt-4o-mini: {params: [top_k]}
+  openai/o4-mini: {params: [top_k]}
+  # logprobs come back empty (`content: []`) on these models and Dify never reads them.
+  openai/gpt-5: {params: [logprobs, top_logprobs]}
+  openai/gpt-5-mini: {params: [logprobs, top_logprobs]}
+  openai/gpt-5-nano: {params: [logprobs, top_logprobs]}
+  openai/gpt-5-pro: {params: [logprobs, top_logprobs]}
+  openai/gpt-5.1: {params: [logprobs, top_logprobs]}
+  openai/gpt-5.2: {params: [logprobs, top_logprobs]}
+  openai/gpt-5.2-pro: {params: [logprobs, top_logprobs]}

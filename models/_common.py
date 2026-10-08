@@ -2,7 +2,14 @@ import base64
 from collections.abc import Generator, Mapping
 from decimal import Decimal, InvalidOperation
 
+from dify_plugin.entities.model import ModelFeature
 from dify_plugin.entities.model.llm import LLMResultChunk, LLMUsage
+from dify_plugin.entities.model.message import (
+    PromptMessage,
+    PromptMessageContentType,
+    TextPromptMessageContent,
+    UserPromptMessage,
+)
 from dify_plugin.entities.model.text_embedding import EmbeddingUsage
 
 # ZenMux serves the same API from two regions; `region` comes from the provider credentials.
@@ -84,6 +91,40 @@ def apply_reported_cost(usage, raw_usage: Mapping | None):
         "completion_price_unit": PRICE_UNIT,
         "total_price": cost, "currency": "USD",
     })
+
+
+FILE_FEATURES = {
+    PromptMessageContentType.IMAGE: (ModelFeature.VISION, "Image"),
+    PromptMessageContentType.DOCUMENT: (ModelFeature.DOCUMENT, "File"),
+    PromptMessageContentType.AUDIO: (ModelFeature.AUDIO, "Audio"),
+    PromptMessageContentType.VIDEO: (ModelFeature.VIDEO, "Video"),
+}
+
+
+def keep_supported_files(messages: list[PromptMessage], features) -> list[PromptMessage]:
+    """Replace files of a type the model does not declare with a short text note.
+
+    Every route sends what the model declares and nothing is dropped silently: an undeclared
+    file becomes e.g. "[Audio: memo.mp3]". Messages left with only text collapse to a string.
+    """
+    features = {getattr(f, "value", f) for f in features or []}
+    result = []
+    for msg in messages:
+        if not (isinstance(msg, UserPromptMessage) and isinstance(msg.content, list)):
+            result.append(msg)
+            continue
+        parts = []
+        for c in msg.content:
+            feature, label = FILE_FEATURES.get(c.type, (None, None))
+            if feature is None or feature.value in features:
+                parts.append(c)
+            else:
+                name = c.filename or c.url
+                parts.append(TextPromptMessageContent(data=f"[{label}: {name}]" if name else f"[{label}]"))
+        if all(isinstance(p, TextPromptMessageContent) for p in parts):
+            parts = " ".join(p.data for p in parts)
+        result.append(msg.model_copy(update={"content": parts}))
+    return result
 
 
 def strip_reasoning(chunks: Generator[LLMResultChunk, None, None]) -> Generator[LLMResultChunk, None, None]:
