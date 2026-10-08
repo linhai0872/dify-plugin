@@ -462,10 +462,18 @@ def build_llm(m, probe):
     }
 
 
+def retrieval_features(m):
+    """Dify (>= 1.11) treats embedding/rerank models listing `vision` as multimodal and sends images."""
+    feats = ["vision"] if "image" in m["input"] else []
+    removed = set(m.get("features_remove") or [])
+    return {"features": kept} if (kept := [f for f in feats if f not in removed]) else {}
+
+
 def build_embedding(m, probe):
     max_chunks = m.get("max_chunks") or (2048 if probe.get("batch_ok", True) else 1)
     return {
         "model": m["id"], "label": i18n(m["name"], m["name"]), "model_type": "text-embedding",
+        **retrieval_features(m),
         "model_properties": {"context_size": m.get("context") or 8192, "max_chunks": max_chunks},
         "pricing": price_block(m["price"], with_output=False),
     }
@@ -473,6 +481,7 @@ def build_embedding(m, probe):
 
 def build_rerank(m, _probe):
     return {"model": m["id"], "label": i18n(m["name"], m["name"]), "model_type": "rerank",
+            **retrieval_features(m),
             "model_properties": {"context_size": m.get("context") or 8192}}
 
 

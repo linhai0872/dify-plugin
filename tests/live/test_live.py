@@ -115,12 +115,12 @@ def test_gemini_thinking_controls(llm, model, params):
     assert_billed(usage)
 
 
-def _red_square_png() -> str:
+def _square_png(rgb: bytes = b"\xff\x00\x00") -> str:
     import base64
     import struct
     import zlib
 
-    raw = b"".join(b"\x00" + b"\xff\x00\x00" * 64 for _ in range(64))
+    raw = b"".join(b"\x00" + rgb * 64 for _ in range(64))
 
     def chunk(tag, data):
         return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
@@ -142,7 +142,7 @@ def test_vision_input(llm, model, params):
 
     prompt = [UserPromptMessage(content=[
         TextPromptMessageContent(data="What single color fills this image? Answer with one word."),
-        ImagePromptMessageContent(format="png", base64_data=_red_square_png(), mime_type="image/png"),
+        ImagePromptMessageContent(format="png", base64_data=_square_png(), mime_type="image/png"),
     ])]
     text, _, _ = run(llm, model, prompt, params)
     assert "red" in text.lower().split("</think>")[-1]
@@ -180,3 +180,28 @@ def test_rerank(factory):
     docs = ["Paris is the capital of France.", "Bananas are yellow.", "Berlin is in Germany."]
     result = reranker.invoke("qwen/qwen3-rerank", creds(), "What is the capital of France?", docs, top_n=2)
     assert result.docs[0].index == 0 and 0 < result.docs[0].score <= 1
+
+
+def test_qwen_vl_embedding_batches_over_the_20_input_limit(factory):
+    embedder = factory.get_instance(ModelType.TEXT_EMBEDDING)
+    result = embedder.invoke("qwen/qwen3-vl-embedding", creds(), [f"chunk {i}" for i in range(45)])
+    assert len(result.embeddings) == 45
+
+
+def test_multimodal_embedding_and_rerank_use_the_image(factory):
+    from dify_plugin.entities.model.text_embedding import MultiModalContent, MultiModalContentType
+
+    image = lambda rgb: MultiModalContent(content=_square_png(rgb), content_type=MultiModalContentType.IMAGE)
+    text = lambda s: MultiModalContent(content=s, content_type=MultiModalContentType.TEXT)
+    red, blue = image(b"\xff\x00\x00"), image(b"\x00\x00\xff")
+
+    embedder = factory.get_instance(ModelType.TEXT_EMBEDDING)
+    result = embedder.invoke_multimodal("qwen/qwen3-vl-embedding", creds(), [red, text("a red square")])
+    assert len(result.embeddings) == 2 and result.usage.total_price > 0
+
+    reranker = factory.get_instance(ModelType.RERANK)
+    ranked = reranker.invoke_multimodal("qwen/qwen3-vl-rerank", creds(), text("a solid blue square"), [red, blue])
+    assert ranked.docs[0].index == 1
+    ranked = reranker.invoke_multimodal("qwen/qwen3-vl-rerank", creds(), red,
+                                        [text("a blue square"), text("a red square")])
+    assert ranked.docs[0].index == 1

@@ -4,5 +4,7 @@ label:
   en_US: 'Qwen: Qwen3 VL Rerank'
   zh_Hans: 'Qwen: Qwen3 VL Rerank'
 model_type: rerank
+features:
+- vision
 model_properties:
   context_size: 1000000

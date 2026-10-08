@@ -1,3 +1,4 @@
+import base64
 from collections.abc import Generator, Mapping
 from decimal import Decimal, InvalidOperation
 
@@ -27,6 +28,19 @@ def anthropic_base_url(credentials: Mapping | None) -> str:
 
 def vertex_base_url(credentials: Mapping | None) -> str:
     return f"{zenmux_host(credentials)}/api/vertex-ai"
+
+
+_IMAGE_SIGNATURES = ((b"\x89PNG", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF8", "image/gif"), (b"BM", "image/bmp"))
+
+
+def image_data_uri(content: str) -> str:
+    """Dify hands knowledge-base images over as bare base64; ZenMux wants a data URI (or a URL)."""
+    if content.startswith(("data:", "http://", "https://")):
+        return content
+    head = base64.b64decode(content[:24])
+    mime = "image/webp" if head[:4] == b"RIFF" and head[8:12] == b"WEBP" else next(
+        (m for sig, m in _IMAGE_SIGNATURES if head.startswith(sig)), "image/png")
+    return f"data:{mime};base64,{content}"
 
 
 def _decimal(value) -> Decimal | None:

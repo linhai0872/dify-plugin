@@ -27,6 +27,24 @@ def test_claude_thinking_style_matches_model():
     assert "reasoning_budget" not in _rules("claude-opus-4.8")
 
 
+def _model(folder, stem):
+    return yaml.safe_load((ROOT / "models" / folder / f"{stem}.yaml").read_text())
+
+
+def test_multimodal_retrieval_models_are_flagged_for_dify():
+    # Dify's knowledge base only sends images to embedding/rerank models that list `vision`.
+    assert "vision" in _model("text_embedding", "qwen3-vl-embedding")["features"]
+    assert "vision" in _model("rerank", "qwen3-vl-rerank")["features"]
+    # ZenMux embeds gemini-embedding-2 data URIs as text, so it must stay text-only.
+    assert "features" not in _model("text_embedding", "gemini-embedding-2")
+    assert "features" not in _model("rerank", "qwen3-rerank")
+
+
+def test_qwen_vl_embedding_batch_limit():
+    # ZenMux rejects more than 20 inputs per request for this model (400).
+    assert _model("text_embedding", "qwen3-vl-embedding")["model_properties"]["max_chunks"] == 20
+
+
 def test_free_and_retired_models_are_not_listed():
     names = {p.stem for p in (ROOT / "models" / "llm").glob("*.yaml")}
     assert not any(n.endswith("-free") for n in names)
