@@ -1,11 +1,9 @@
-import base64
 import json
 import logging
 from collections.abc import Generator
 from pathlib import Path
 from typing import Optional, Union
 
-import requests
 from dify_plugin import OAICompatLargeLanguageModel
 from dify_plugin.entities.model import ModelFeature
 from dify_plugin.entities.model.llm import LLMResult
@@ -16,15 +14,18 @@ from dify_plugin.entities.model.message import (
     UserPromptMessage,
 )
 
-from models._common import apply_reported_cost, keep_supported_files, openai_base_url, strip_reasoning
+from models._common import (
+    apply_reported_cost,
+    file_base64,
+    file_data_uri,
+    keep_supported_files,
+    openai_base_url,
+    strip_reasoning,
+)
 
 logger = logging.getLogger(__name__)
 
 REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
-
-
-def _base64(c) -> str:
-    return c.base64_data or base64.b64encode(requests.get(c.url, timeout=(10, 120)).content).decode()
 
 
 # ZenMux passes files through to each upstream, and upstreams disagree on the part format: the
@@ -32,11 +33,11 @@ def _base64(c) -> str:
 # or data-URI base64 depending on the provider. The probe tries the candidates in order per model
 # and scripts/zenmux_models.py writes the winner to _openai_inputs.json; the first is the default.
 PART_FORMATS = {
-    "file": lambda c: {"type": "file", "file": {"filename": c.filename or f"{c.type.value}.{c.format}", "file_data": c.data}},
-    "video_url": lambda c: {"type": "video_url", "video_url": {"url": c.data}},
-    "input_audio": lambda c: {"type": "input_audio", "input_audio": {"data": _base64(c), "format": c.format}},
-    "input_audio_uri": lambda c: {"type": "input_audio", "input_audio": {
-        "data": f"data:{c.mime_type};base64,{_base64(c)}", "format": c.format}},
+    "file": lambda c: {"type": "file", "file": {"filename": c.filename or f"{c.type.value}.{c.format}",
+                                                "file_data": file_data_uri(c)}},
+    "video_url": lambda c: {"type": "video_url", "video_url": {"url": file_data_uri(c)}},
+    "input_audio": lambda c: {"type": "input_audio", "input_audio": {"data": file_base64(c), "format": c.format}},
+    "input_audio_uri": lambda c: {"type": "input_audio", "input_audio": {"data": file_data_uri(c), "format": c.format}},
 }
 INPUT_FORMAT_CANDIDATES = {"file": ["file"], "video": ["video_url", "file"], "audio": ["input_audio", "input_audio_uri"]}
 INPUT_KIND = {PromptMessageContentType.DOCUMENT: "file", PromptMessageContentType.VIDEO: "video",
@@ -63,7 +64,7 @@ class ZenMuxOpenAICCLargeLanguageModel(OAICompatLargeLanguageModel):
         if c.type == PromptMessageContentType.TEXT:
             return {"type": "text", "text": c.data}
         if c.type == PromptMessageContentType.IMAGE:
-            return {"type": "image_url", "image_url": {"url": c.data, "detail": c.detail.value}}
+            return {"type": "image_url", "image_url": {"url": file_data_uri(c), "detail": c.detail.value}}
         kind = INPUT_KIND[c.type]
         return PART_FORMATS[(formats or {}).get(kind) or INPUT_FORMAT_CANDIDATES[kind][0]](c)
 

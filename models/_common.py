@@ -2,6 +2,8 @@ import base64
 from collections.abc import Generator, Mapping
 from decimal import Decimal, InvalidOperation
 
+import requests
+
 from dify_plugin.entities.model import ModelFeature
 from dify_plugin.entities.model.llm import LLMResultChunk, LLMUsage
 from dify_plugin.entities.model.message import (
@@ -91,6 +93,19 @@ def apply_reported_cost(usage, raw_usage: Mapping | None):
         "completion_price_unit": PRICE_UNIT,
         "total_price": cost, "currency": "USD",
     })
+
+
+def file_base64(c) -> str:
+    """The file's bytes as base64, fetched here if Dify sent only a URL.
+
+    With MULTIMODAL_SEND_FORMAT=url Dify passes its own signed file URL, which upstreams often cannot
+    reach (self-hosted, internal) or refuse ("Invalid file data"), so the plugin always inlines the file.
+    """
+    return c.base64_data or base64.b64encode(requests.get(c.url, timeout=(10, 120)).content).decode()
+
+
+def file_data_uri(c) -> str:
+    return f"data:{c.mime_type};base64,{file_base64(c)}"
 
 
 FILE_FEATURES = {

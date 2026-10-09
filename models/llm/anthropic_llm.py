@@ -6,7 +6,6 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import Optional, Union
 
-import requests
 import anthropic as anthropic_sdk
 from dify_plugin.entities.model.llm import LLMResult, LLMResultChunk, LLMResultChunkDelta
 from dify_plugin.entities.model.message import (
@@ -29,7 +28,7 @@ from dify_plugin.errors.model import (
 )
 from dify_plugin.interfaces.model.large_language_model import LargeLanguageModel
 
-from models._common import anthropic_base_url, apply_reported_cost, keep_supported_files
+from models._common import anthropic_base_url, apply_reported_cost, file_base64, keep_supported_files
 
 logger = logging.getLogger(__name__)
 
@@ -70,13 +69,6 @@ class ZenMuxAnthropicLargeLanguageModel(LargeLanguageModel):
             base_url=anthropic_base_url(credentials),
         )
 
-    @staticmethod
-    def _fetch_url_image(url: str) -> tuple[str, str]:
-        resp = requests.get(url, timeout=30)
-        resp.raise_for_status()
-        media_type = resp.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
-        return base64.standard_b64encode(resp.content).decode(), media_type
-
     def _build_content_blocks(self, content) -> list[dict]:
         if isinstance(content, str):
             return [{"type": "text", "text": content}]
@@ -92,36 +84,18 @@ class ZenMuxAnthropicLargeLanguageModel(LargeLanguageModel):
         return blocks
 
     def _document_block(self, item) -> dict:
-        if item.base64_data:
-            return {
-                "type": "document",
-                "source": {
-                    "type": "base64",
-                    "media_type": item.mime_type or "application/pdf",
-                    "data": item.base64_data,
-                },
-            }
-        if item.url:
-            return {"type": "document", "source": {"type": "url", "url": item.url}}
-        return {"type": "text", "text": f"[Document unavailable: {getattr(item, 'filename', '')}]"}
+        if not (item.base64_data or item.url):
+            return {"type": "text", "text": f"[Document unavailable: {getattr(item, 'filename', '')}]"}
+        return {"type": "document", "source": {"type": "base64", "media_type": item.mime_type or "application/pdf",
+                                               "data": file_base64(item)}}
 
     def _image_block(self, item) -> dict:
-        if item.base64_data:
-            return {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": item.mime_type or "image/jpeg",
-                    "data": item.base64_data,
-                },
-            }
-        if item.url:
-            try:
-                b64, mime = self._fetch_url_image(item.url)
-                return {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}}
-            except Exception as exc:
-                logger.warning("Image fetch failed (%s): %s", item.url, exc)
-        return {"type": "text", "text": f"[Image unavailable: {getattr(item, 'url', '')}]"}
+        try:
+            return {"type": "image", "source": {"type": "base64", "media_type": item.mime_type or "image/jpeg",
+                                                "data": file_base64(item)}}
+        except Exception as exc:
+            logger.warning("Image fetch failed (%s): %s", item.url, exc)
+            return {"type": "text", "text": f"[Image unavailable: {getattr(item, 'url', '')}]"}
 
     def _convert_messages(
         self, prompt_messages: list[PromptMessage]

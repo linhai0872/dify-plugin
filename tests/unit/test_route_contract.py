@@ -66,6 +66,26 @@ def test_route_delivers_every_input_it_may_advertise(route, modality):
         assert PAYLOAD in part, (route, modality, part)
 
 
+@pytest.mark.parametrize("route,modality", [(r, m) for r, mods in gen.ROUTE_INPUTS.items() for m in sorted(mods)])
+def test_url_only_files_are_inlined(monkeypatch, route, modality):
+    # Dify with MULTIMODAL_SEND_FORMAT=url passes only its own file URL, which upstreams often cannot reach
+    # or refuse ("Invalid file data"), so every route must fetch it and send the bytes.
+    class Resp:
+        content, headers = b"contract-test-payload", {"Content-Type": SAMPLES[modality].mime_type}
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr("requests.get", lambda *a, **k: Resp())
+    original = SAMPLES[modality]
+    SAMPLES[modality] = original.model_copy(update={"base64_data": "", "url": "https://dify.internal/files/x"})
+    try:
+        for part in _delivered(route, modality):
+            assert PAYLOAD in part and "dify.internal" not in part, (route, modality, part)
+    finally:
+        SAMPLES[modality] = original
+
+
 def test_advertised_inputs_are_deliverable_and_verified():
     probes = json.loads((ROOT / "catalog" / "probes.json").read_text())["models"]
     overrides = yaml.safe_load((ROOT / "catalog" / "overrides.yaml").read_text()) or {}

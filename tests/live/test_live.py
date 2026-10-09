@@ -178,14 +178,50 @@ def samples():
     return gen.input_samples()
 
 
+@pytest.fixture(scope="module")
+def file_server():
+    """Serves bytes over HTTP like Dify's signed file URLs (MULTIMODAL_SEND_FORMAT=url); yields a publish function."""
+    import http.server
+    import threading
+
+    files = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = files.get(self.path, b"")
+            self.send_response(200 if body else 404)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def publish(name, data):
+        files[f"/{name}"] = data
+        return f"http://127.0.0.1:{server.server_address[1]}/{name}"
+
+    yield publish
+    server.shutdown()
+
+
+@pytest.mark.parametrize("transfer", ["base64", "url"])
 @pytest.mark.parametrize("route,modality,model", _cheapest_per_route_and_input())
-def test_file_input_reaches_the_model(llm, samples, route, modality, model):
-    # Every route x input the YAMLs advertise, end to end through the plugin: the answer is a random code.
+def test_file_input_reaches_the_model(llm, samples, file_server, route, modality, model, transfer):
+    # Every route x input the YAMLs advertise, end to end through the plugin, in both shapes Dify sends
+    # (graphon file_manager.to_prompt_message_content): inline base64, or only a URL to Dify's file store.
+    import base64
+
     from dify_plugin.entities.model.message import TextPromptMessageContent
 
     if modality not in samples:
         pytest.skip(f"no local tool to make a {modality} sample")
     content, question, check = samples[modality]
+    if transfer == "url":
+        url = file_server(f"{modality}.{content.format}", base64.b64decode(content.base64_data))
+        content = content.model_copy(update={"base64_data": "", "url": url})
     params = {"max_output_tokens": 2048} if route == "google" else {"max_tokens": 2048}
     prompt = [UserPromptMessage(content=[TextPromptMessageContent(data=question), content])]
     answers = []
