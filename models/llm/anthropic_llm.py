@@ -90,12 +90,8 @@ class ZenMuxAnthropicLargeLanguageModel(LargeLanguageModel):
                                                "data": file_base64(item)}}
 
     def _image_block(self, item) -> dict:
-        try:
-            return {"type": "image", "source": {"type": "base64", "media_type": item.mime_type or "image/jpeg",
-                                                "data": file_base64(item)}}
-        except Exception as exc:
-            logger.warning("Image fetch failed (%s): %s", item.url, exc)
-            return {"type": "text", "text": f"[Image unavailable: {getattr(item, 'url', '')}]"}
+        return {"type": "image", "source": {"type": "base64", "media_type": item.mime_type or "image/jpeg",
+                                            "data": file_base64(item)}}
 
     def _convert_messages(
         self, prompt_messages: list[PromptMessage]

@@ -10,6 +10,7 @@ import json
 import sys
 
 import pytest
+import requests
 import yaml
 from dify_plugin.entities.model.message import (
     AudioPromptMessageContent,
@@ -44,9 +45,9 @@ def _llm_yamls():
         yield yaml.safe_load(path.read_text())
 
 
-def _delivered(route, modality):
+def _delivered(route, modality, content=None):
     """Serialized request part(s) the route builds for one sample file."""
-    content = SAMPLES[modality]
+    content = content or SAMPLES[modality]
     if route == "openai":
         formats = INPUT_FORMAT_CANDIDATES.get(modality, [None])
         return [json.dumps(ZenMuxOpenAICCLargeLanguageModel._content_part(content, {modality: f})) for f in formats]
@@ -66,24 +67,41 @@ def test_route_delivers_every_input_it_may_advertise(route, modality):
         assert PAYLOAD in part, (route, modality, part)
 
 
-@pytest.mark.parametrize("route,modality", [(r, m) for r, mods in gen.ROUTE_INPUTS.items() for m in sorted(mods)])
+ROUTE_X_INPUT = [(r, m) for r, mods in gen.ROUTE_INPUTS.items() for m in sorted(mods)]
+
+
+def _serve(monkeypatch, status, body):
+    """Make every requests.get return a real Response, so raise_for_status behaves as in production."""
+    def fake_get(url, *args, **kwargs):
+        response = requests.models.Response()
+        response.status_code, response._content, response.url = status, body, url
+        response.headers["Content-Type"] = "text/html" if status >= 400 else "application/octet-stream"
+        return response
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+
+def _url_only(modality):
+    return SAMPLES[modality].model_copy(update={"base64_data": "", "url": "https://dify.internal/files/x?sign=secret"})
+
+
+@pytest.mark.parametrize("route,modality", ROUTE_X_INPUT)
 def test_url_only_files_are_inlined(monkeypatch, route, modality):
     # Dify with MULTIMODAL_SEND_FORMAT=url passes only its own file URL, which upstreams often cannot reach
     # or refuse ("Invalid file data"), so every route must fetch it and send the bytes.
-    class Resp:
-        content, headers = b"contract-test-payload", {"Content-Type": SAMPLES[modality].mime_type}
+    _serve(monkeypatch, 200, b"contract-test-payload")
+    for part in _delivered(route, modality, _url_only(modality)):
+        assert PAYLOAD in part and "dify.internal" not in part, (route, modality, part)
 
-        def raise_for_status(self):
-            pass
 
-    monkeypatch.setattr("requests.get", lambda *a, **k: Resp())
-    original = SAMPLES[modality]
-    SAMPLES[modality] = original.model_copy(update={"base64_data": "", "url": "https://dify.internal/files/x"})
-    try:
-        for part in _delivered(route, modality):
-            assert PAYLOAD in part and "dify.internal" not in part, (route, modality, part)
-    finally:
-        SAMPLES[modality] = original
+@pytest.mark.parametrize("status", [403, 404, 500])
+@pytest.mark.parametrize("route,modality", ROUTE_X_INPUT)
+def test_failed_downloads_are_errors_not_content(monkeypatch, route, modality, status):
+    # Review of 3d07d3c: an HTML error page was encoded and sent to the model as the file.
+    _serve(monkeypatch, status, b"<html>error page</html>")
+    with pytest.raises(Exception) as caught:
+        _delivered(route, modality, _url_only(modality))
+    assert f"HTTP {status}" in str(caught.value) and "sign=secret" not in str(caught.value), caught.value
 
 
 def test_advertised_inputs_are_deliverable_and_verified():

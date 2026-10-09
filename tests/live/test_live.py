@@ -188,8 +188,8 @@ def file_server():
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            body = files.get(self.path, b"")
-            self.send_response(200 if body else 404)
+            status, body = files.get(self.path.split("?")[0], (404, b"<html>not found</html>"))
+            self.send_response(status)
             self.end_headers()
             self.wfile.write(body)
 
@@ -199,9 +199,9 @@ def file_server():
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    def publish(name, data):
-        files[f"/{name}"] = data
-        return f"http://127.0.0.1:{server.server_address[1]}/{name}"
+    def publish(name, data, status=200):
+        files[f"/{name}"] = (status, data)
+        return f"http://127.0.0.1:{server.server_address[1]}/{name}?sign=secret"
 
     yield publish
     server.shutdown()
@@ -231,6 +231,21 @@ def test_file_input_reaches_the_model(llm, samples, file_server, route, modality
         if check(answers[-1]):
             break
     assert check(answers[-1]), (model, answers)
+
+
+@pytest.mark.parametrize("status", [403, 404, 500])
+@pytest.mark.parametrize("route,modality,model", [c for c in _cheapest_per_route_and_input() if c[1] == "image"])
+def test_failed_file_download_is_a_clear_error(llm, samples, file_server, route, modality, model, status):
+    # An error page must not be sent to the model as the file (review of 3d07d3c), nor leak the signed URL.
+    from dify_plugin.entities.model.message import TextPromptMessageContent
+    from dify_plugin.errors.model import InvokeError
+
+    content, question, _ = samples[modality]
+    url = file_server(f"missing-{status}.png", b"<html>error page</html>", status)
+    content = content.model_copy(update={"base64_data": "", "url": url})
+    with pytest.raises(InvokeError) as caught:
+        run(llm, model, [UserPromptMessage(content=[TextPromptMessageContent(data=question), content])], {})
+    assert f"HTTP {status}" in str(caught.value) and "sign=secret" not in str(caught.value), caught.value
 
 
 def test_openai_reasoning_effort(llm):

@@ -101,7 +101,15 @@ def file_base64(c) -> str:
     With MULTIMODAL_SEND_FORMAT=url Dify passes its own signed file URL, which upstreams often cannot
     reach (self-hosted, internal) or refuse ("Invalid file data"), so the plugin always inlines the file.
     """
-    return c.base64_data or base64.b64encode(requests.get(c.url, timeout=(10, 120)).content).decode()
+    if c.base64_data:
+        return c.base64_data
+    response = requests.get(c.url, timeout=(10, 120))
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as e:
+        # The signed URL stays out of the message; it would end up in Dify's logs.
+        raise ValueError(f"Could not download {c.filename or c.type.value} for the model: HTTP {response.status_code}") from e
+    return base64.b64encode(response.content).decode()
 
 
 def file_data_uri(c) -> str:

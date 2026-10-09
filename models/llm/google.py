@@ -9,7 +9,6 @@ from collections.abc import Generator, Iterator, Sequence
 from contextlib import suppress
 from typing import Optional, Union, Mapping, Any, Tuple, List, TypeVar
 
-import requests
 from dify_plugin.entities.model.llm import LLMResult, LLMResultChunk, LLMResultChunkDelta
 from dify_plugin.entities.model.message import (
     AssistantPromptMessage,
@@ -37,7 +36,7 @@ from dify_plugin.interfaces.model.large_language_model import LargeLanguageModel
 from google import genai
 from google.genai import errors, types
 
-from models._common import keep_supported_files, vertex_base_url
+from models._common import file_base64, keep_supported_files, vertex_base_url
 
 from .utils import FileCache, UNSUPPORTED_DOCUMENT_TYPES, UNSUPPORTED_EXTENSIONS
 
@@ -134,17 +133,12 @@ class ZenMuxGoogleLargeLanguageModel(LargeLanguageModel):
                 file_content = base64.b64decode(message_content.base64_data)
                 temp_file.write(file_content)
             else:
-                try:
-                    file_url = message_content.url
-                    if file_server_url_prefix:
-                        file_url = f"{file_server_url_prefix.rstrip('/')}/files{message_content.url.split('/files')[-1]}"
-                    if not file_url.startswith("https://") and not file_url.startswith("http://"):
-                        raise ValueError("Set FILES_URL env first!")
-                    response: requests.Response = requests.get(file_url, timeout=(10, 120))
-                    response.raise_for_status()
-                    temp_file.write(response.content)
-                except Exception as ex:
-                    raise ValueError(f"Failed to fetch data from url {file_url} {ex}")
+                file_url = message_content.url
+                if file_server_url_prefix:
+                    file_url = f"{file_server_url_prefix.rstrip('/')}/files{message_content.url.split('/files')[-1]}"
+                if not file_url.startswith("https://") and not file_url.startswith("http://"):
+                    raise ValueError("Set FILES_URL env first!")
+                temp_file.write(base64.b64decode(file_base64(message_content.model_copy(update={"url": file_url}))))
             temp_file.flush()
 
         pending_mime_type = message_content.mime_type
