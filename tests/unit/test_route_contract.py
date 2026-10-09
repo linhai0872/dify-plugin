@@ -156,3 +156,26 @@ def test_fit_thinking_budget_examples():
     assert fit_thinking_budget(3000, 2048, 64000) == (3000, 2048)
     assert fit_thinking_budget(2048, 2048, 64000) == (3072, 2048)
     assert fit_thinking_budget(1024, 63999, 64000) == (64000, 63999)
+
+
+@pytest.mark.parametrize("route", sorted(gen.ROUTE_INPUTS))
+def test_errors_while_streaming_become_dify_errors(llm, monkeypatch, route):
+    # Gemini and Anthropic send the request on the first iteration; the SDK's own error transform
+    # never sees those exceptions, so Dify showed raw tracebacks (e.g. Gemini 400 on audio-only webm).
+    from dify_plugin.errors.model import InvokeBadRequestError, InvokeError
+    from google.genai import errors as genai_errors
+
+    upstream = {"google": genai_errors.ClientError(400, {"error": {"message": "Request contains an invalid argument."}}),
+                "anthropic": ValueError("boom"), "openai": ValueError("boom")}[route]
+    model = next(d["model"] for d in _llm_yamls() if gen.protocol_of(d["model"]) == route)
+
+    def failing_stream(*_a, **_k):
+        raise upstream
+        yield  # noqa: unreachable - makes this a generator
+
+    monkeypatch.setattr(type(llm.model_map[model]), "_invoke", lambda self, *a, **k: failing_stream())
+    with pytest.raises(InvokeError) as caught:
+        list(llm._invoke(model, {}, [], {}))
+    if route == "google":
+        assert isinstance(caught.value, InvokeBadRequestError)
+        assert "invalid argument" in str(caught.value)

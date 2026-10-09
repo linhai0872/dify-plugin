@@ -1,6 +1,9 @@
 
+from collections.abc import Generator
+
 from dify_plugin import LargeLanguageModel
 from dify_plugin.entities.model import AIModelEntity, ModelType
+from dify_plugin.errors.model import InvokeError
 
 from .anthropic_llm import ZenMuxAnthropicLargeLanguageModel
 from .google import ZenMuxGoogleLargeLanguageModel
@@ -73,7 +76,31 @@ class ZenMuxLargeLanguageModel(LargeLanguageModel):
 
     def _invoke(self, model: str, *args, **kwargs):
         model_obj = self._get_model_class_for_model(model)
-        return model_obj._invoke(model, *args, **kwargs)
+        result = model_obj._invoke(model, *args, **kwargs)
+        return self._map_stream_errors(result) if isinstance(result, Generator) else result
+
+    def _transform_invoke_error(self, error: Exception) -> InvokeError:
+        """Map with the mapping of the protocol whose SDK raised the error (each keeps its own order),
+        instead of the merged mapping, where a generic class of one SDK could shadow a specific one."""
+        if isinstance(error, InvokeError):
+            return error
+        for model_obj in self.protocol_models:
+            if any(isinstance(error, tuple(sources)) for sources in model_obj._invoke_error_mapping.values()):
+                return model_obj._transform_invoke_error(error)
+        return super()._transform_invoke_error(error)
+
+    def _map_stream_errors(self, chunks: Generator) -> Generator:
+        """Give errors raised while streaming the same Dify error types as errors raised before it.
+
+        The SDK only transforms exceptions from `_invoke` itself; the Gemini and Anthropic SDKs send
+        the request on the first iteration, so their HTTP errors surfaced in Dify as raw tracebacks.
+        """
+        try:
+            yield from chunks
+        except InvokeError:
+            raise
+        except Exception as e:
+            raise self._transform_invoke_error(e) from e
 
     def get_num_tokens(self, model: str, *args, **kwargs):
         model_obj = self._get_model_class_for_model(model)

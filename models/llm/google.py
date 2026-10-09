@@ -182,8 +182,8 @@ class ZenMuxGoogleLargeLanguageModel(LargeLanguageModel):
         """
         Map model invoke error to unified error
         """
+        # Checked in order: ClientError/ServerError subclass APIError, so the generic entry goes last.
         return {
-            InvokeConnectionError: [errors.APIError, errors.ClientError],
             InvokeServerUnavailableError: [errors.ServerError],
             InvokeBadRequestError: [
                 errors.ClientError,
@@ -191,6 +191,7 @@ class ZenMuxGoogleLargeLanguageModel(LargeLanguageModel):
                 errors.UnsupportedFunctionError,
                 errors.FunctionInvocationError,
             ],
+            InvokeConnectionError: [errors.APIError],
         }
 
     @staticmethod
